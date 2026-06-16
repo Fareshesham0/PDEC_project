@@ -11,6 +11,7 @@ const LEVEL_COLOR: Record<RiskLevel, string> = {
   low: "text-yellow-500",
   medium: "text-orange-500",
   high: "text-red-500",
+  very_high: "text-red-700 dark:text-red-400",
 };
 
 const LEVEL_LABEL: Record<RiskLevel, string> = {
@@ -18,6 +19,7 @@ const LEVEL_LABEL: Record<RiskLevel, string> = {
   low: "Low Risk",
   medium: "Medium Risk",
   high: "High Risk",
+  very_high: "Very High Risk",
 };
 
 export function ScoreGauge({ score, level, size = 144 }: ScoreGaugeProps) {

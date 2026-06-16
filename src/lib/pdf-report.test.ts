@@ -13,15 +13,21 @@ const baseResult: ExposureResult = {
   breachCount: 2,
   pwnedCount: 0,
   checkedAt: "2026-01-01T00:00:00.000Z",
-  riskLevel: "high",
-  riskScore: 82,
+  riskLevel: "very_high",
+  riskScore: 100,
   riskExplanation:
-    "This account appears in multiple breaches including sensitive data such as passwords.",
+    "This account appears in multiple breaches and at least one reaches very high ENISA-normalized severity.",
   recommendations: [
     "Change passwords on the affected services immediately.",
     "Enable two-factor authentication everywhere it is supported.",
   ],
-  factors: { frequency: 30, recency: 28, sensitivity: 24 },
+  factors: {
+    dpc: 4,
+    ei: 1,
+    cb: 0.5,
+    enisaSeverity: 4.5,
+    normalizedScore: 100,
+  },
   breaches: [
     {
       name: "ExampleBreach",
@@ -32,8 +38,15 @@ const baseResult: ExposureResult = {
       dataClasses: ["Email addresses", "Passwords"],
       isVerified: true,
       isSensitive: false,
-      severityScore: 78,
-      severityLevel: "high",
+      severityScore: 100,
+      severityLevel: "very_high",
+      enisaFactors: {
+        dpc: 4,
+        ei: 1,
+        cb: 0.5,
+        enisaSeverity: 4.5,
+        normalizedScore: 100,
+      },
     },
     {
       name: "OtherSite",
@@ -44,8 +57,15 @@ const baseResult: ExposureResult = {
       dataClasses: ["Email addresses"],
       isVerified: true,
       isSensitive: false,
-      severityScore: 35,
-      severityLevel: "medium",
+      severityScore: 31,
+      severityLevel: "low",
+      enisaFactors: {
+        dpc: 1,
+        ei: 0.75,
+        cb: 0.5,
+        enisaSeverity: 1.25,
+        normalizedScore: 31,
+      },
     },
   ],
 };
@@ -94,7 +114,16 @@ test("buildExposureReport — email report includes the email identifier in the 
 
 test("buildExposureReport — password report uses the 'a password' placeholder and never leaks plaintext", () => {
   const doc = buildExposureReport({
-    result: { ...baseResult, factors: { frequency: 0, recency: 0, sensitivity: 0 } },
+    result: {
+      ...baseResult,
+      factors: {
+        dpc: 0,
+        ei: 0,
+        cb: 0,
+        enisaSeverity: 0,
+        normalizedScore: 0,
+      },
+    },
     identifier: "a password",
     origin: "https://example.test",
   });
@@ -120,8 +149,8 @@ test("buildExposureReport — includes risk level, score, and a methodology link
     origin: "https://example.test",
   });
   const bytes = pdfBytes(doc);
-  assert.ok(bytesIncludes(bytes, "High Risk"), "Qualitative risk label expected");
-  assert.ok(bytesIncludes(bytes, "82/100"), "Numeric score expected");
+  assert.ok(bytesIncludes(bytes, "Very High Risk"), "Qualitative risk label expected");
+  assert.ok(bytesIncludes(bytes, "100/100"), "Numeric score expected");
   assert.ok(
     bytesIncludes(bytes, "/methodology"),
     "Methodology page link expected",

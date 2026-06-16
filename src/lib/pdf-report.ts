@@ -12,6 +12,7 @@ const RISK_LABEL: Record<RiskLevel, string> = {
   low: "Low Risk",
   medium: "Medium Risk",
   high: "High Risk",
+  very_high: "Very High Risk",
 };
 
 const RISK_ACCENT_RGB: Record<RiskLevel, [number, number, number]> = {
@@ -19,12 +20,15 @@ const RISK_ACCENT_RGB: Record<RiskLevel, [number, number, number]> = {
   low: [234, 179, 8],
   medium: [249, 115, 22],
   high: [239, 68, 68],
+  very_high: [185, 28, 28],
 };
 
 const SEVERITY_RGB: Record<string, [number, number, number]> = {
+  none: [16, 185, 129],
   low: [234, 179, 8],
   medium: [249, 115, 22],
   high: [239, 68, 68],
+  very_high: [185, 28, 28],
 };
 
 interface BuildOptions {
@@ -32,7 +36,7 @@ interface BuildOptions {
   /**
    * Display identifier. For email checks this should be the actual email
    * address. For password checks this MUST be the literal string
-   * "a password" — the plaintext password is never written to the report.
+   * "a password" because the plaintext password is never written to the report.
    */
   identifier: string;
   /**
@@ -42,17 +46,10 @@ interface BuildOptions {
   origin?: string;
 }
 
-const PAGE_W = 595.28; // A4 portrait width in pt (jsPDF default)
+const PAGE_W = 595.28;
 const MARGIN_X = 48;
 const TEXT_WIDTH = PAGE_W - MARGIN_X * 2;
 
-/**
- * Build a downloadable PDF report from an ExposureResult.
- *
- * Privacy: this runs entirely in the browser. Nothing is sent over the
- * network. For password checks the caller must pass identifier="a password"
- * — the plaintext password is intentionally not part of the input.
- */
 export function buildExposureReport({
   result,
   identifier,
@@ -64,7 +61,6 @@ export function buildExposureReport({
   const generatedAt = new Date();
   const accent = RISK_ACCENT_RGB[result.riskLevel] ?? [100, 100, 100];
 
-  // ── Header ────────────────────────────────────────────────────────────────
   doc.setFillColor(accent[0], accent[1], accent[2]);
   doc.rect(0, 0, PAGE_W, 6, "F");
 
@@ -90,7 +86,6 @@ export function buildExposureReport({
     80,
   );
 
-  // ── Summary block ─────────────────────────────────────────────────────────
   let cursorY = 108;
 
   doc.setFont("helvetica", "normal");
@@ -99,7 +94,6 @@ export function buildExposureReport({
     result.riskExplanation,
     TEXT_WIDTH - 32,
   );
-  // Height = top padding + title + score line + explanation lines + bottom pad.
   const summaryBoxHeight = Math.max(
     96,
     58 + explanationLines.length * 12 + 16,
@@ -122,7 +116,7 @@ export function buildExposureReport({
   doc.setFontSize(11);
   doc.setTextColor(accent[0], accent[1], accent[2]);
   doc.text(
-    `${RISK_LABEL[result.riskLevel]}  ·  Score ${result.riskScore}/100`,
+    `${RISK_LABEL[result.riskLevel]} - Score ${result.riskScore}/100`,
     MARGIN_X + 16,
     cursorY + 40,
   );
@@ -134,34 +128,37 @@ export function buildExposureReport({
 
   cursorY += summaryBoxHeight + 18;
 
-  // ── Factor breakdown (only meaningful for email checks) ───────────────────
   if (!isPasswordReport && result.factors) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(20, 20, 20);
-    doc.text("Score breakdown", MARGIN_X, cursorY);
+    doc.text("ENISA score breakdown", MARGIN_X, cursorY);
     cursorY += 8;
 
     autoTable(doc, {
       startY: cursorY,
       margin: { left: MARGIN_X, right: MARGIN_X },
       theme: "grid",
-      head: [["Factor", "Contribution", "Maximum"]],
+      head: [["Factor", "Value", "Meaning"]],
       body: [
-        ["Frequency (number of breaches)", String(result.factors.frequency), "40"],
-        ["Recency (newest breach age)", String(result.factors.recency), "30"],
-        ["Sensitivity (data class severity)", String(result.factors.sensitivity), "30"],
+        ["DPC", String(result.factors.dpc), "Data Processing Context (max 4)"],
+        ["EI", String(result.factors.ei), "Ease of Identification (max 1)"],
+        ["CB", String(result.factors.cb), "Circumstances of Breach (max 1)"],
         [
-          { content: "Total", styles: { fontStyle: "bold" } },
+          { content: "ENISA SE", styles: { fontStyle: "bold" } },
           {
-            content: String(
-              result.factors.frequency +
-                result.factors.recency +
-                result.factors.sensitivity,
-            ),
+            content: String(result.factors.enisaSeverity),
             styles: { fontStyle: "bold" },
           },
-          { content: "100", styles: { fontStyle: "bold" } },
+          { content: "(DPC x EI) + CB", styles: { fontStyle: "bold" } },
+        ],
+        [
+          { content: "Normalized score", styles: { fontStyle: "bold" } },
+          {
+            content: `${result.factors.normalizedScore}/100`,
+            styles: { fontStyle: "bold" },
+          },
+          { content: "min(100, (SE / 4) x 100)", styles: { fontStyle: "bold" } },
         ],
       ],
       headStyles: {
@@ -174,26 +171,19 @@ export function buildExposureReport({
     cursorY = lastTableY(doc) + 18;
   }
 
-  // ── Breach details table ─────────────────────────────────────────────────
   if (result.breaches.length > 0) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(20, 20, 20);
-    doc.text(
-      `Breach details (${result.breachCount})`,
-      MARGIN_X,
-      cursorY,
-    );
+    doc.text(`Breach details (${result.breachCount})`, MARGIN_X, cursorY);
     cursorY += 8;
 
     const body = result.breaches.map((b: BreachEntry) => [
       b.name,
       formatDate(b.breachDate),
       b.dataClasses.join(", "),
-      // Defensive: omit the parenthetical if the severityLevel is missing,
-      // so the cell never renders the literal string "undefined".
       b.severityLevel
-        ? `${b.severityScore} (${b.severityLevel})`
+        ? `${b.severityScore} (${formatLevel(b.severityLevel)})`
         : `${b.severityScore}`,
     ]);
 
@@ -213,7 +203,7 @@ export function buildExposureReport({
         0: { cellWidth: 110, fontStyle: "bold" },
         1: { cellWidth: 70 },
         2: { cellWidth: "auto" },
-        3: { cellWidth: 70, halign: "center" },
+        3: { cellWidth: 82, halign: "center" },
       },
       didParseCell: (data) => {
         if (data.section === "body" && data.column.index === 3) {
@@ -231,7 +221,6 @@ export function buildExposureReport({
     cursorY = lastTableY(doc) + 18;
   }
 
-  // ── Recommendations ───────────────────────────────────────────────────────
   if (result.recommendations.length > 0) {
     cursorY = ensureSpace(doc, cursorY, 60);
     doc.setFont("helvetica", "bold");
@@ -248,7 +237,7 @@ export function buildExposureReport({
       const lines = doc.splitTextToSize(rec, TEXT_WIDTH - 16);
       cursorY = ensureSpace(doc, cursorY, lines.length * 12 + 8);
       doc.setFont("helvetica", "bold");
-      doc.text("•", MARGIN_X, cursorY);
+      doc.text("-", MARGIN_X, cursorY);
       doc.setFont("helvetica", "normal");
       doc.text(lines, MARGIN_X + 12, cursorY);
       cursorY += lines.length * 12 + 6;
@@ -256,7 +245,6 @@ export function buildExposureReport({
     cursorY += 8;
   }
 
-  // ── Methodology footer ────────────────────────────────────────────────────
   cursorY = ensureSpace(doc, cursorY, 90);
   doc.setDrawColor(220, 220, 220);
   doc.line(MARGIN_X, cursorY, PAGE_W - MARGIN_X, cursorY);
@@ -269,8 +257,8 @@ export function buildExposureReport({
   cursorY += 12;
 
   const methodologyText = isPasswordReport
-    ? "Password risk is a single-dimension score derived from how many times the password appears in HIBP's Pwned Passwords corpus. The check uses k-anonymity: only the first 5 characters of the SHA-1 hash are sent, never the password itself."
-    : "The 0–100 risk score is the sum of three weighted factors: Frequency (max 40, from the number of breaches), Recency (max 30, from the most recent breach date), and Sensitivity (max 30, from the average sensitivity of exposed data classes). Each individual breach also has its own 0–100 severity score derived from data-class sensitivity, recency, and exposure scale.";
+    ? "Password risk is binary: if the password appears in HIBP's Pwned Passwords corpus, it receives a 100/100 compromised status. The check uses k-anonymity: only the first 5 characters of the SHA-1 hash are sent, never the password itself."
+    : "The 0-100 risk score is based on the highest ENISA-normalized breach severity across the email's breaches. Each breach uses SE = (DPC x EI) + CB, then normalizes with min(100, (SE / 4) x 100). Breach count is supporting context and is not added into the ENISA score.";
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
@@ -285,7 +273,6 @@ export function buildExposureReport({
     url: methodologyUrl,
   });
 
-  // ── Page numbers ──────────────────────────────────────────────────────────
   const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -293,7 +280,7 @@ export function buildExposureReport({
     doc.setFontSize(8);
     doc.setTextColor(150, 150, 150);
     doc.text(
-      `Personal Data Exposure Checker · Page ${i} of ${pageCount}`,
+      `Personal Data Exposure Checker - Page ${i} of ${pageCount}`,
       PAGE_W / 2,
       820,
       { align: "center" },
@@ -303,10 +290,6 @@ export function buildExposureReport({
   return doc;
 }
 
-/**
- * Build the report and trigger a browser download. Returns the resolved
- * filename so callers/tests can assert on it.
- */
 export function downloadExposureReport(opts: BuildOptions): string {
   const doc = buildExposureReport(opts);
   const stamp = new Date().toISOString().slice(0, 10);
@@ -330,7 +313,7 @@ function ensureSpace(doc: jsPDF, cursorY: number, needed: number): number {
 }
 
 function formatDate(iso?: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, {
@@ -340,11 +323,16 @@ function formatDate(iso?: string | null): string {
   });
 }
 
+function formatLevel(level: string): string {
+  return level
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function buildMethodologyUrl(origin?: string): string {
   const base =
     origin ??
     (typeof window !== "undefined" ? window.location.origin : "https://pdec");
-  // Use a stable absolute path so PDF links work in Next.js builds.
-  const path = "/methodology";
-  return `${base}${path}`;
+  return `${base}/methodology`;
 }

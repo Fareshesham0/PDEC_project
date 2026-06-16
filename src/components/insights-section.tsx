@@ -37,27 +37,31 @@ const HIGH_SENSITIVITY_CLASSES = new Set([
 ]);
 
 const SEVERITY_FILL: Record<SeverityLevel, string> = {
+  none: "hsl(var(--severity-none))",
   low: "hsl(var(--severity-low))",
   medium: "hsl(var(--severity-medium))",
   high: "hsl(var(--severity-high))",
+  very_high: "hsl(var(--severity-very-high))",
 };
 
 const SEVERITY_LABEL: Record<SeverityLevel, string> = {
+  none: "No severity",
   low: "Low severity",
   medium: "Medium severity",
   high: "High severity",
+  very_high: "Very high severity",
 };
 
 const FACTOR_FILL = {
-  frequency: "hsl(var(--chart-1))",
-  recency: "hsl(var(--chart-2))",
-  sensitivity: "hsl(var(--chart-3))",
+  dpc: "hsl(var(--chart-1))",
+  ei: "hsl(var(--chart-2))",
+  cb: "hsl(var(--chart-3))",
 } as const;
 
 const FACTOR_CAPS = {
-  frequency: 40,
-  recency: 30,
-  sensitivity: 30,
+  dpc: 4,
+  ei: 1,
+  cb: 1,
 } as const;
 
 interface InsightsSectionProps {
@@ -102,16 +106,16 @@ export function InsightsSection({ breaches, factors }: InsightsSectionProps) {
     if (!factors) return [];
     return [
       {
-        name: "Score",
-        frequency: factors.frequency,
-        recency: factors.recency,
-        sensitivity: factors.sensitivity,
+        name: "ENISA",
+        dpc: factors.dpc,
+        ei: factors.ei,
+        cb: factors.cb,
       },
     ];
   }, [factors]);
 
   const totalScore = factors
-    ? factors.frequency + factors.recency + factors.sensitivity
+    ? factors.normalizedScore
     : 0;
 
   if (breaches.length === 0) return null;
@@ -326,16 +330,16 @@ export function InsightsSection({ breaches, factors }: InsightsSectionProps) {
           </CardContent>
         </Card>
 
-        {/* Score Composition */}
+        {/* ENISA Composition */}
         <Card
           className="border-border/50"
           data-testid="chart-composition-card"
         >
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Score Composition</CardTitle>
+            <CardTitle className="text-base">ENISA Composition</CardTitle>
             <p className="text-xs text-muted-foreground">
-              How your overall {totalScore}/100 risk score breaks down across
-              the three weighted factors.
+              How the highest-severity breach maps to ENISA factors. The
+              normalized score is {totalScore}/100.
             </p>
           </CardHeader>
           <CardContent>
@@ -343,7 +347,7 @@ export function InsightsSection({ breaches, factors }: InsightsSectionProps) {
               <div
                 className="h-[140px] w-full"
                 role="img"
-                aria-label={`Stacked horizontal bar showing score composition: frequency ${factors.frequency} of 40, recency ${factors.recency} of 30, sensitivity ${factors.sensitivity} of 30.`}
+                aria-label={`Stacked horizontal bar showing ENISA factors: DPC ${factors.dpc} of 4, EI ${factors.ei} of 1, CB ${factors.cb} of 1.`}
                 data-testid="chart-composition"
               >
                 <ResponsiveContainer width="100%" height="100%">
@@ -360,8 +364,8 @@ export function InsightsSection({ breaches, factors }: InsightsSectionProps) {
                     />
                     <XAxis
                       type="number"
-                      domain={[0, 100]}
-                      ticks={[0, 25, 50, 75, 100]}
+                      domain={[0, 6]}
+                      ticks={[0, 1, 2, 3, 4, 5, 6]}
                       tick={{
                         fontSize: 11,
                         fill: "hsl(var(--muted-foreground))",
@@ -382,29 +386,29 @@ export function InsightsSection({ breaches, factors }: InsightsSectionProps) {
                       verticalAlign="bottom"
                     />
                     <Bar
-                      dataKey="frequency"
+                      dataKey="dpc"
                       stackId="score"
-                      fill={FACTOR_FILL.frequency}
-                      name={`Frequency (max ${FACTOR_CAPS.frequency})`}
+                      fill={FACTOR_FILL.dpc}
+                      name={`DPC (max ${FACTOR_CAPS.dpc})`}
                     />
                     <Bar
-                      dataKey="recency"
+                      dataKey="ei"
                       stackId="score"
-                      fill={FACTOR_FILL.recency}
-                      name={`Recency (max ${FACTOR_CAPS.recency})`}
+                      fill={FACTOR_FILL.ei}
+                      name={`EI (max ${FACTOR_CAPS.ei})`}
                     />
                     <Bar
-                      dataKey="sensitivity"
+                      dataKey="cb"
                       stackId="score"
-                      fill={FACTOR_FILL.sensitivity}
-                      name={`Sensitivity (max ${FACTOR_CAPS.sensitivity})`}
+                      fill={FACTOR_FILL.cb}
+                      name={`CB (max ${FACTOR_CAPS.cb})`}
                     />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Score breakdown is unavailable for this check.
+                ENISA breakdown is unavailable for this check.
               </p>
             )}
           </CardContent>
@@ -418,7 +422,7 @@ export function InsightsSection({ breaches, factors }: InsightsSectionProps) {
 function SeverityLegend() {
   return (
     <div className="flex flex-wrap gap-3 mt-3 text-xs text-muted-foreground">
-      {(["low", "medium", "high"] as SeverityLevel[]).map((lvl) => (
+      {(["low", "medium", "high", "very_high"] as SeverityLevel[]).map((lvl) => (
         <span key={lvl} className="inline-flex items-center gap-1.5">
           <span
             className="inline-block w-3 h-3 rounded-full"
@@ -472,7 +476,9 @@ function TimelineTooltip({ active, payload }: TooltipProps) {
       <div>
         Severity:{" "}
         <span className="font-mono font-medium">{p.severityScore}/100</span>{" "}
-        <span className="text-muted-foreground">({p.severityLevel})</span>
+        <span className="text-muted-foreground">
+          ({p.severityLevel ? SEVERITY_LABEL[p.severityLevel] : "Unknown"})
+        </span>
       </div>
       {typeof p.pwnCount === "number" && p.pwnCount > 0 && (
         <div className="text-muted-foreground">

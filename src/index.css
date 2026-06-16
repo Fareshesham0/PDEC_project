@@ -122,9 +122,11 @@
   --chart-5: 222 47% 11%;
 
   /* Severity scale used by the Insights charts on the results page. */
+  --severity-none: 160 84% 39%;
   --severity-low: 45 93% 47%;
   --severity-medium: 25 95% 53%;
   --severity-high: 0 84% 60%;
+  --severity-very-high: 0 72% 35%;
 
   --app-font-sans: 'Plus Jakarta Sans', sans-serif;
   --app-font-serif: Georgia, serif;
@@ -207,9 +209,11 @@
   --ring: 221 83% 53%;
 
   /* Brighter severity scale for dark mode legibility. */
+  --severity-none: 160 84% 45%;
   --severity-low: 45 93% 60%;
   --severity-medium: 25 95% 60%;
   --severity-high: 0 84% 65%;
+  --severity-very-high: 0 84% 72%;
 }
 
 @layer base {

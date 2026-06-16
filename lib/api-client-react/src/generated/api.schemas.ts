@@ -34,10 +34,47 @@ export interface CheckExposureBody {
 export type SeverityLevel = (typeof SeverityLevel)[keyof typeof SeverityLevel];
 
 export const SeverityLevel = {
+  none: "none",
   low: "low",
   medium: "medium",
   high: "high",
+  very_high: "very_high",
 } as const;
+
+/**
+ * ENISA scoring factors used to normalize breach severity to 0-100.
+ */
+export interface RiskFactors {
+  /**
+   * Data Processing Context.
+   * @minimum 0
+   * @maximum 4
+   */
+  dpc: number;
+  /**
+   * Ease of Identification.
+   * @minimum 0
+   * @maximum 1
+   */
+  ei: number;
+  /**
+   * Circumstances of Breach.
+   * @minimum 0
+   * @maximum 1
+   */
+  cb: number;
+  /**
+   * Raw ENISA severity: (DPC * EI) + CB.
+   * @minimum 0
+   */
+  enisaSeverity: number;
+  /**
+   * ENISA severity normalized to 0-100.
+   * @minimum 0
+   * @maximum 100
+   */
+  normalizedScore: number;
+}
 
 export interface BreachEntry {
   /** Name of the breached service or dataset */
@@ -71,16 +108,18 @@ export interface BreachEntry {
   /** Whether the breach is marked sensitive by HIBP */
   isSensitive: boolean;
   /**
-   * Per-breach severity score (0-100), derived from data-class sensitivity, recency, and exposure scale.
+   * Per-breach severity score (0-100), derived from ENISA DPC, EI, and CB factors.
    * @minimum 0
    * @maximum 100
    */
   severityScore: number;
   severityLevel: SeverityLevel;
+  /** ENISA factor details used to calculate this breach severity. */
+  enisaFactors?: RiskFactors;
 }
 
 /**
- * Qualitative risk level based on breach frequency, recency, and data sensitivity
+ * Qualitative risk level based on ENISA-normalized breach severity, or binary compromised password status.
  */
 export type RiskLevel = (typeof RiskLevel)[keyof typeof RiskLevel];
 
@@ -89,34 +128,13 @@ export const RiskLevel = {
   low: "low",
   medium: "medium",
   high: "high",
+  very_high: "very_high",
 } as const;
 
 /**
- * Numeric contribution of each scoring factor to the overall 0-100 risk
-score. Always present in the response so the contract is uniform across
-check types. For email checks the three caps are 40/30/30. For password
-checks the score is single-dimension (driven by HIBP Pwned Passwords
-occurrence count) so all three factors are returned as 0; the UI hides
-the breakdown for password checks.
-
+ * ENISA scoring factors for the highest-severity email breach. For password
+checks all fields are 0 because compromised password status is binary.
  */
-export interface RiskFactors {
-  /**
-   * @minimum 0
-   * @maximum 40
-   */
-  frequency: number;
-  /**
-   * @minimum 0
-   * @maximum 30
-   */
-  recency: number;
-  /**
-   * @minimum 0
-   * @maximum 30
-   */
-  sensitivity: number;
-}
 
 export interface ExposureResult {
   /** Whether the identifier was found in any known breach */

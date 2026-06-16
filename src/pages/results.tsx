@@ -47,6 +47,7 @@ const RISK_COLOR: Record<RiskLevel, string> = {
   low: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20",
   medium: "bg-orange-500/10 text-orange-600 border-orange-500/20",
   high: "bg-red-500/10 text-red-600 border-red-500/20",
+  very_high: "bg-red-700/10 text-red-700 dark:text-red-400 border-red-700/20",
 };
 
 const RISK_LABEL: Record<RiskLevel, string> = {
@@ -54,12 +55,23 @@ const RISK_LABEL: Record<RiskLevel, string> = {
   low: "Low Risk",
   medium: "Medium Risk",
   high: "High Risk",
+  very_high: "Very High Risk",
 };
 
 const SEVERITY_COLOR: Record<SeverityLevel, string> = {
+  none: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30",
   low: "bg-yellow-500/10 text-yellow-600 border-yellow-500/30",
   medium: "bg-orange-500/10 text-orange-600 border-orange-500/30",
   high: "bg-red-500/10 text-red-600 border-red-500/30",
+  very_high: "bg-red-700/10 text-red-700 dark:text-red-400 border-red-700/30",
+};
+
+const SEVERITY_LABEL: Record<SeverityLevel, string> = {
+  none: "None",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  very_high: "Very High",
 };
 
 export default function Results() {
@@ -142,7 +154,7 @@ export default function Results() {
 
   const handleCopyReport = () => {
     const factorLine = factors
-      ? `Factors: Frequency ${factors.frequency}/40 · Recency ${factors.recency}/30 · Sensitivity ${factors.sensitivity}/30\n`
+      ? `ENISA factors: DPC ${factors.dpc}/4 - EI ${factors.ei}/1 - CB ${factors.cb}/1 - SE ${factors.enisaSeverity} - Normalized ${factors.normalizedScore}/100\n`
       : "";
     const report = `Data Exposure Report\nStatus: ${exposed ? "Breaches Detected" : "No Breaches Found"}\nRisk Level: ${RISK_LABEL[riskLevel]}\nRisk Score: ${riskScore}/100\n${factorLine}Breaches: ${breachCount}\n\n${riskExplanation}`;
     navigator.clipboard.writeText(report).then(() => {
@@ -212,7 +224,7 @@ export default function Results() {
         {!isPasswordCheck && factors && (
           <div className="border-t border-border px-6 py-5 bg-muted/10">
             <h2 className="text-sm font-semibold text-foreground mb-3 uppercase tracking-wide">
-              Score breakdown
+              ENISA score breakdown
             </h2>
             <FactorBreakdown factors={factors} />
           </div>
@@ -358,19 +370,19 @@ function HowCalculated({ isPasswordCheck }: { isPasswordCheck: boolean }) {
       <CollapsibleContent className="text-sm text-muted-foreground leading-relaxed mt-3 space-y-2">
         {isPasswordCheck ? (
           <p>
-            Password risk is a single-dimension score derived from how many
-            times the password appears in HIBP's Pwned Passwords corpus. Higher
-            counts mean attackers actively use this password in
-            credential-stuffing attacks.
+            Password risk is treated as a binary compromised-secret signal. If
+            the password appears in HIBP's Pwned Passwords corpus, it receives a
+            100/100 risk score regardless of occurrence count; otherwise it
+            receives 0/100.
           </p>
         ) : (
           <p>
-            The 0–100 risk score is the sum of three weighted factors:{" "}
-            <strong>Frequency</strong> (max 40, from the number of breaches),{" "}
-            <strong>Recency</strong> (max 30, from the most recent breach
-            date), and <strong>Sensitivity</strong> (max 30, from the average
-            sensitivity of exposed data classes). Each individual breach below
-            also has its own 0–100 severity badge.
+            The 0-100 risk score is based on the highest ENISA-normalized
+            breach severity across your results. Each breach is scored with{" "}
+            <strong>SE = (DPC x EI) + CB</strong>, where DPC is Data Processing
+            Context, EI is Ease of Identification, and CB is Circumstances of
+            Breach. Breach count is shown as supporting context, not added into
+            the ENISA score.
           </p>
         )}
         <p>
@@ -431,7 +443,7 @@ function BreachCard({
                   data-testid="breach-severity-badge"
                   title={`Per-breach severity score (0-100)`}
                 >
-                  Severity {breach.severityScore} · {breach.severityLevel}
+                  Severity {breach.severityScore} - {SEVERITY_LABEL[breach.severityLevel]}
                 </Badge>
               )}
             </CardTitle>

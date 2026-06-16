@@ -1,5 +1,5 @@
-export type RiskLevel = "none" | "low" | "medium" | "high";
-export type SeverityLevel = "low" | "medium" | "high";
+export type RiskLevel = "none" | "low" | "medium" | "high" | "very_high";
+export type SeverityLevel = "none" | "low" | "medium" | "high" | "very_high";
 
 export interface HibpBreach {
   Name: string;
@@ -14,9 +14,11 @@ export interface HibpBreach {
 }
 
 export interface RiskFactors {
-  frequency: number;
-  recency: number;
-  sensitivity: number;
+  dpc: number;
+  ei: number;
+  cb: number;
+  enisaSeverity: number;
+  normalizedScore: number;
 }
 
 export interface RiskAssessment {
@@ -30,92 +32,169 @@ export interface RiskAssessment {
 export interface BreachSeverity {
   score: number;
   level: SeverityLevel;
+  factors: RiskFactors;
 }
 
-const FACTOR_MAX = { frequency: 40, recency: 30, sensitivity: 30 } as const;
-const PER_BREACH_MAX = { sensitivity: 50, recency: 30, scale: 20 } as const;
+const ZERO_FACTORS: RiskFactors = {
+  dpc: 0,
+  ei: 0,
+  cb: 0,
+  enisaSeverity: 0,
+  normalizedScore: 0,
+};
 
-const HIGH_SENSITIVITY_CLASSES = new Set([
+const CREDENTIAL_OR_SENSITIVE_CLASSES = new Set([
   "Passwords",
+  "Password hashes",
   "Password hints",
   "Security questions and answers",
-  "Credit cards",
-  "Banking details",
-  "Payment histories",
+  "Security questions",
   "Social security numbers",
   "Government issued IDs",
-]);
-
-const MEDIUM_SENSITIVITY_CLASSES = new Set([
-  "Phone numbers",
-  "Physical addresses",
-  "Dates of birth",
-  "Financial data",
+  "Passport numbers",
+  "National IDs",
   "Health & fitness data",
   "Medical records",
-  "Bank account numbers",
-  "IP addresses",
+  "Personal health data",
 ]);
 
-function daysBetween(a: Date, b: Date): number {
-  return Math.floor((a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
+const FINANCIAL_CLASSES = new Set([
+  "Credit cards",
+  "Credit card CVV",
+  "Banking details",
+  "Payment histories",
+  "Financial data",
+  "Bank account numbers",
+  "Transactions",
+]);
+
+const BEHAVIOURAL_OR_PROFILE_CLASSES = new Set([
+  "IP addresses",
+  "Geographic locations",
+  "Location data",
+  "Browsing histories",
+  "Social media profiles",
+  "Online identifiers",
+  "Dates of birth",
+  "Phone numbers",
+  "Physical addresses",
+]);
+
+function normalizedClassText(dataClasses: string[]): string {
+  return dataClasses.join(" ").toLowerCase();
 }
 
-function sensitivityWeight(dataClasses: string[]): number {
-  let weight = 0;
-  for (const cls of dataClasses) {
-    if (HIGH_SENSITIVITY_CLASSES.has(cls)) weight += 3;
-    else if (MEDIUM_SENSITIVITY_CLASSES.has(cls)) weight += 1.5;
-    else weight += 0.5;
+function hasAnyExact(dataClasses: string[], values: Set<string>): boolean {
+  return dataClasses.some((dataClass) => values.has(dataClass));
+}
+
+function hasAnyKeyword(text: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function calculateDpc(dataClasses: string[]): number {
+  const text = normalizedClassText(dataClasses);
+  let dpc = 1;
+
+  if (
+    hasAnyExact(dataClasses, BEHAVIOURAL_OR_PROFILE_CLASSES) ||
+    hasAnyKeyword(text, ["ip address", "location", "browsing", "profile", "online identifier"])
+  ) {
+    dpc = Math.max(dpc, 2);
   }
-  return Math.min(weight, 15);
+
+  if (
+    hasAnyExact(dataClasses, FINANCIAL_CLASSES) ||
+    hasAnyKeyword(text, ["payment", "credit", "bank", "transaction", "financial"])
+  ) {
+    dpc = Math.max(dpc, 3);
+  }
+
+  if (
+    hasAnyExact(dataClasses, CREDENTIAL_OR_SENSITIVE_CLASSES) ||
+    hasAnyKeyword(text, [
+      "password",
+      "security question",
+      "government",
+      "passport",
+      "national id",
+      "health",
+      "medical",
+      "social security",
+    ])
+  ) {
+    dpc = Math.max(dpc, 4);
+  }
+
+  return dpc;
 }
 
-function recencyPoints(breachDate: string | undefined, addedDate: string): number {
-  const dateStr = breachDate || addedDate;
-  if (!dateStr) return 0;
-  const days = daysBetween(new Date(), new Date(dateStr));
-  if (Number.isNaN(days)) return 0;
-  if (days < 180) return 30;
-  if (days < 365) return 20;
-  if (days < 730) return 10;
-  return 5;
+function calculateEi(dataClasses: string[]): number {
+  const text = normalizedClassText(dataClasses);
+  if (
+    hasAnyKeyword(text, ["email"]) &&
+    hasAnyKeyword(text, ["name", "phone", "address", "username"])
+  ) {
+    return 1;
+  }
+  if (hasAnyKeyword(text, ["email"])) return 0.75;
+  if (hasAnyKeyword(text, ["username"])) return 0.5;
+  return 0.25;
 }
 
-function recencyScoreAcrossBreaches(breaches: HibpBreach[]): number {
-  if (breaches.length === 0) return 0;
-  const mostRecent = breaches.reduce((latest, b) => {
-    const d = new Date(b.BreachDate || b.AddedDate);
-    return d > latest ? d : latest;
-  }, new Date(0));
-  const days = daysBetween(new Date(), mostRecent);
-  if (days < 180) return 30;
-  if (days < 365) return 20;
-  if (days < 730) return 10;
-  return 5;
+function calculateCb(breach: HibpBreach): number {
+  const text = `${breach.Name} ${breach.Description}`.toLowerCase();
+  let cb = 0;
+
+  if (breach.IsVerified || hasAnyKeyword(text, ["public", "leak", "exposed", "dump"])) {
+    cb += 0.5;
+  }
+
+  if (
+    breach.IsSensitive ||
+    hasAnyKeyword(text, [
+      "hack",
+      "hacked",
+      "malicious",
+      "stolen",
+      "credential",
+      "ransomware",
+      "compromised",
+      "unauthorised",
+      "unauthorized",
+    ])
+  ) {
+    cb += 0.5;
+  }
+
+  return Math.min(cb, 1);
 }
 
-function severityLevelFromScore(score: number): SeverityLevel {
-  if (score < 30) return "low";
-  if (score < 60) return "medium";
-  return "high";
+function levelFromScore(score: number): RiskLevel {
+  if (score === 0) return "none";
+  if (score < 50) return "low";
+  if (score < 75) return "medium";
+  if (score < 100) return "high";
+  return "very_high";
 }
 
 export function assessBreachSeverity(breach: HibpBreach): BreachSeverity {
-  const sensitivity = Math.min(
-    (sensitivityWeight(breach.DataClasses) / 15) * PER_BREACH_MAX.sensitivity,
-    PER_BREACH_MAX.sensitivity,
-  );
-  const recency = Math.min(recencyPoints(breach.BreachDate, breach.AddedDate), PER_BREACH_MAX.recency);
-  const pwn = breach.PwnCount || 0;
-  let scale: number;
-  if (pwn >= 100_000_000) scale = 20;
-  else if (pwn >= 10_000_000) scale = 15;
-  else if (pwn >= 1_000_000) scale = 10;
-  else if (pwn >= 10_000) scale = 5;
-  else scale = 0;
-  const score = Math.round(Math.min(sensitivity + recency + scale, 100));
-  return { score, level: severityLevelFromScore(score) };
+  const dpc = calculateDpc(breach.DataClasses);
+  const ei = calculateEi(breach.DataClasses);
+  const cb = calculateCb(breach);
+  const enisaSeverity = Number(((dpc * ei) + cb).toFixed(2));
+  const normalizedScore = Math.min(100, Math.round((enisaSeverity / 4) * 100));
+  return {
+    score: normalizedScore,
+    level: levelFromScore(normalizedScore),
+    factors: {
+      dpc,
+      ei,
+      cb,
+      enisaSeverity,
+      normalizedScore,
+    },
+  };
 }
 
 export function assessEmailRisk(breaches: HibpBreach[]): RiskAssessment {
@@ -124,35 +203,36 @@ export function assessEmailRisk(breaches: HibpBreach[]): RiskAssessment {
       riskLevel: "none",
       riskScore: 0,
       riskExplanation:
-        "No breaches were found for this email address in the Have I Been Pwned database. This does not guarantee your data has never been exposed, but there is no recorded exposure.",
+        "No breaches were found for this email address in the checked breach datasets. This does not guarantee your data has never been exposed, but there is no recorded exposure.",
       recommendations: [
         "Continue using a unique, strong password for every account.",
         "Enable two-factor authentication (2FA) on all important accounts.",
         "Be alert to phishing emails even if your address has not been found in known breaches.",
         "Check back periodically - new breaches are discovered regularly.",
       ],
-      factors: { frequency: 0, recency: 0, sensitivity: 0 },
+      factors: ZERO_FACTORS,
     };
   }
-  const frequency = Math.min(breaches.length * 8, FACTOR_MAX.frequency);
-  const recency = recencyScoreAcrossBreaches(breaches);
-  const sensitivityTotal = breaches.reduce((sum, b) => sum + sensitivityWeight(b.DataClasses), 0);
-  const avgSensitivity = Math.min(sensitivityTotal / breaches.length, 15);
-  const sensitivity = Math.min((avgSensitivity / 15) * FACTOR_MAX.sensitivity, FACTOR_MAX.sensitivity);
-  const riskScore = Math.round(Math.min(frequency + recency + sensitivity, 100));
-  const riskLevel: RiskLevel = riskScore === 0 ? "none" : riskScore < 30 ? "low" : riskScore < 60 ? "medium" : "high";
+  const severities = breaches.map(assessBreachSeverity);
+  const highestSeverity = severities.reduce((highest, current) =>
+    current.score > highest.score ? current : highest,
+  );
+  const riskScore = highestSeverity.score;
+  const riskLevel = levelFromScore(riskScore);
   const hasPasswordExposure = breaches.some((b) =>
-    b.DataClasses.some((c) => HIGH_SENSITIVITY_CLASSES.has(c) && c.toLowerCase().includes("password")),
+    b.DataClasses.some((c) => c.toLowerCase().includes("password")),
   );
   const hasCreditCardExposure = breaches.some((b) => b.DataClasses.some((c) => c.toLowerCase().includes("credit")));
 
   let riskExplanation = "";
   if (riskLevel === "low") {
-    riskExplanation = `Your email was found in ${breaches.length} breach${breaches.length > 1 ? "es" : ""}. The exposed data is of lower sensitivity, but you should still take precautions.`;
+    riskExplanation = `Your email was found in ${breaches.length} breach${breaches.length > 1 ? "es" : ""}. The highest ENISA-normalized breach severity is low, but you should still take precautions.`;
   } else if (riskLevel === "medium") {
-    riskExplanation = `Your email appeared in ${breaches.length} breach${breaches.length > 1 ? "es" : ""}${recency >= 20 ? ", including recent incidents" : ""}. Some sensitive data types were exposed. We recommend updating your credentials.`;
-  } else {
-    riskExplanation = `Your email was found in ${breaches.length} breach${breaches.length > 1 ? "es" : ""} including highly sensitive data${hasCreditCardExposure ? " such as financial information" : hasPasswordExposure ? " such as passwords" : ""}. Immediate action is recommended.`;
+    riskExplanation = `Your email appeared in ${breaches.length} breach${breaches.length > 1 ? "es" : ""}. At least one breach has medium ENISA-normalized severity based on exposed data context, identifiability, and breach circumstances.`;
+  } else if (riskLevel === "high") {
+    riskExplanation = `Your email was found in ${breaches.length} breach${breaches.length > 1 ? "es" : ""}. At least one breach has high ENISA-normalized severity${hasCreditCardExposure ? " involving financial information" : hasPasswordExposure ? " involving credentials" : ""}. Prompt action is recommended.`;
+  } else if (riskLevel === "very_high") {
+    riskExplanation = `Your email was found in ${breaches.length} breach${breaches.length > 1 ? "es" : ""}. At least one breach reaches very high ENISA-normalized severity${hasCreditCardExposure ? " involving financial information" : hasPasswordExposure ? " involving credentials" : ""}. Immediate action is recommended.`;
   }
 
   const recommendations: string[] = [];
@@ -168,16 +248,11 @@ export function assessEmailRisk(breaches: HibpBreach[]): RiskAssessment {
     riskScore,
     riskExplanation,
     recommendations: recommendations.slice(0, 5),
-    factors: {
-      frequency: Math.round(frequency),
-      recency: Math.round(recency),
-      sensitivity: Math.round(sensitivity),
-    },
+    factors: highestSeverity.factors,
   };
 }
 
 export function assessPasswordRisk(found: boolean, count: number): RiskAssessment {
-  const zeroFactors: RiskFactors = { frequency: 0, recency: 0, sensitivity: 0 };
   if (!found) {
     return {
       riskLevel: "none",
@@ -190,38 +265,14 @@ export function assessPasswordRisk(found: boolean, count: number): RiskAssessmen
         "Enable two-factor authentication wherever possible.",
         "Change this password if you suspect it may have been compromised in any way.",
       ],
-      factors: zeroFactors,
+      factors: ZERO_FACTORS,
     };
   }
-  let riskScore: number;
-  let riskLevel: RiskLevel;
-  if (count >= 100000) {
-    riskScore = 95;
-    riskLevel = "high";
-  } else if (count >= 10000) {
-    riskScore = 80;
-    riskLevel = "high";
-  } else if (count >= 1000) {
-    riskScore = 60;
-    riskLevel = "medium";
-  } else if (count >= 100) {
-    riskScore = 40;
-    riskLevel = "medium";
-  } else {
-    riskScore = 25;
-    riskLevel = "low";
-  }
   const formattedCount = count.toLocaleString();
-  const riskExplanation =
-    riskLevel === "high"
-      ? `This password has been seen ${formattedCount} times in data breaches. It is extremely common and attackers actively use it in credential-stuffing attacks. Stop using it immediately.`
-      : riskLevel === "medium"
-        ? `This password appears ${formattedCount} times in breach databases. It is not unique enough to be safe - attackers include it in automated attack dictionaries.`
-        : `This password has been seen ${formattedCount} time${count > 1 ? "s" : ""} in breaches. Even rare password appearances indicate the password is not private - consider changing it.`;
   return {
-    riskLevel,
-    riskScore,
-    riskExplanation,
+    riskLevel: "very_high",
+    riskScore: 100,
+    riskExplanation: `This password appears in the HIBP Pwned Passwords corpus ${formattedCount} time${count !== 1 ? "s" : ""}. Under the project methodology, any known compromised password is treated as maximum risk and should be replaced immediately.`,
     recommendations: [
       "Stop using this password on all accounts immediately.",
       "Replace it with a long, randomly generated password (at least 16 characters).",
@@ -229,6 +280,6 @@ export function assessPasswordRisk(found: boolean, count: number): RiskAssessmen
       "Use a password manager to avoid reusing passwords across sites.",
       "Check all accounts that share this password and change them as a priority.",
     ],
-    factors: zeroFactors,
+    factors: ZERO_FACTORS,
   };
 }

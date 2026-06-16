@@ -85,6 +85,7 @@ export const onRequestPost: ApiHandler = async (ctx) => {
             isSensitive: b.IsSensitive,
             severityScore: severity.score,
             severityLevel: severity.level,
+            enisaFactors: severity.factors,
           };
         });
 
@@ -124,8 +125,8 @@ export const onRequestPost: ApiHandler = async (ctx) => {
               isVerified: true,
               isSensitive: true,
               severityScore: riskScore,
-              severityLevel:
-                riskScore >= 60 ? "high" : riskScore >= 30 ? "medium" : "low",
+              severityLevel: riskScore === 100 ? "very_high" : "none",
+              enisaFactors: factors,
             },
           ]
         : [];
